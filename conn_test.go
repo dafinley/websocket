@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -297,10 +298,28 @@ func TestWasm(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "go", "test", "-exec=wasmbrowsertest", "./...")
+	cmd := exec.CommandContext(ctx, "go", "test", "-c", "-o wasm.test", ".")
 	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", fmt.Sprintf("WS_ECHO_SERVER_URL=%v", wstest.URL(s)))
 
+	timer := time.AfterFunc(time.Second*20, func() {
+		cmd.Process.Signal(syscall.SIGQUIT)
+	})
+	defer timer.Stop()
+
 	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm test binary failed: %v:\n%s", err, b)
+	}
+
+	browserTestCmd := exec.CommandContext(ctx, "wasmbrowsertest", "./test.wasm", "-test.v")
+	browserTestCmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", fmt.Sprintf("WS_ECHO_SERVER_URL=%v", wstest.URL(s)))
+
+	timer = time.AfterFunc(time.Second*20, func() {
+		browserTestCmd.Process.Signal(syscall.SIGQUIT)
+	})
+	defer timer.Stop()
+
+	b, err = browserTestCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("wasm test binary failed: %v:\n%s", err, b)
 	}
