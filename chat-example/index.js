@@ -6,16 +6,16 @@
   function dial() {
     const conn = new WebSocket(`ws://${location.host}/subscribe`)
 
-    conn.addEventListener("close", ev => {
+    conn.addEventListener("close", (ev) => {
       console.info("websocket disconnected, reconnecting in 1000ms", ev)
       setTimeout(dial, 1000)
     })
-    conn.addEventListener("open", ev => {
+    conn.addEventListener("open", (ev) => {
       console.info("websocket connected")
     })
 
     // This is where we handle messages received.
-    conn.addEventListener("message", ev => {
+    conn.addEventListener("message", (ev) => {
       if (typeof ev.data !== "string") {
         console.error("unexpected message type", typeof ev.data)
         return
@@ -44,7 +44,7 @@
   appendLog("Submit a message to get started!")
 
   // onsubmit publishes the message from the user when the form is submitted.
-  publishForm.onsubmit = ev => {
+  publishForm.onsubmit = (ev) => {
     ev.preventDefault()
 
     const msg = messageInput.value

@@ -298,7 +298,7 @@ func TestWasm(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "go", "test", "-c", "-o wasm.test", ".")
+	cmd := exec.CommandContext(ctx, "go", "test", "-c", "-o", "test.wasm", ".")
 	cmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", fmt.Sprintf("WS_ECHO_SERVER_URL=%v", wstest.URL(s)))
 
 	timer := time.AfterFunc(time.Second*20, func() {
@@ -323,6 +323,8 @@ func TestWasm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wasm test binary failed: %v:\n%s", err, b)
 	}
+
+	t.Logf("%s", b)
 }
 
 func assertCloseStatus(exp websocket.StatusCode, err error) error {

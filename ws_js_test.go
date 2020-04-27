@@ -15,6 +15,8 @@ import (
 func TestWasm(t *testing.T) {
 	t.Parallel()
 
+	t.Logf("hi")
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
