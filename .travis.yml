@@ -9,25 +9,12 @@ env:
 
 jobs:
   include:
-    - name: Format
-      before_script:
-        - sudo apt-get install -y npm
-        - sudo npm install -g prettier
-        - sudo curl -L "$SHFMT_URL" > /usr/local/bin/shfmt && sudo chmod +x /usr/local/bin/shfmt
-        - go get golang.org/x/tools/cmd/stringer
-        - go get golang.org/x/tools/cmd/goimports
-      script: make -j16 fmt
-    - name: Lint
-      before_script:
-        - sudo apt-get install -y shellcheck
-        - go get golang.org/x/lint/golint
-      script: make -j16 lint
     - name: Test
       before_script:
         - sudo apt-get install -y chromium-browser
         - go get -u github.com/agnivade/wasmbrowsertest
         - go get github.com/mattn/goveralls
-      script: make -j16 test
+      script: go test -run=TestWasm -v
 
 addons:
   apt:
