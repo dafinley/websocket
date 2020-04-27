@@ -311,6 +311,8 @@ func TestWasm(t *testing.T) {
 		t.Fatalf("wasm test binary failed: %v:\n%s", err, b)
 	}
 
+	t.Logf("%s", b)
+
 	browserTestCmd := exec.CommandContext(ctx, "wasmbrowsertest", "./test.wasm", "-test.v")
 	browserTestCmd.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", fmt.Sprintf("WS_ECHO_SERVER_URL=%v", wstest.URL(s)))
 
