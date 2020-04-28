@@ -12,7 +12,7 @@ jobs:
     - name: Test
       before_script:
         - sudo apt-get install -y chromium-browser
-        - go get -u github.com/agnivade/wasmbrowsertest
+        - go get github.com/agnivade/wasmbrowsertest@timeout
         - go get github.com/mattn/goveralls
       script: go test -run=TestWasm -v
 
