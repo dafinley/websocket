@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync"
 	"time"
+        "strings"
 
 	"golang.org/x/time/rate"
 
@@ -37,6 +38,8 @@ type chatServer struct {
 
 	subscribersMu sync.Mutex
 	subscribers   map[*subscriber]struct{}
+        roomsMu       sync.Mutex
+        rooms         map[string]map[*subscriber]struct{}
 }
 
 // newChatServer constructs a chatServer with the defaults.
@@ -45,11 +48,14 @@ func newChatServer() *chatServer {
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
 		subscribers:             make(map[*subscriber]struct{}),
+                rooms:                   make(map[string]map[*subscriber]struct{}),
 		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*100), 8),
 	}
 	cs.serveMux.Handle("/", http.FileServer(http.Dir(".")))
 	cs.serveMux.HandleFunc("/subscribe", cs.subscribeHandler)
-	cs.serveMux.HandleFunc("/publish", cs.publishHandler)
+        cs.serveMux.HandleFunc("/subscribe/", cs.subscribeHandler)
+        cs.serveMux.HandleFunc("/publish", cs.publishHandler)
+	cs.serveMux.HandleFunc("/publish/", cs.publishHandler)
 
 	return cs
 }
@@ -69,14 +75,23 @@ func (cs *chatServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // subscribeHandler accepts the WebSocket connection and then subscribes
 // it to all future messages.
 func (cs *chatServer) subscribeHandler(w http.ResponseWriter, r *http.Request) {
-	c, err := websocket.Accept(w, r, nil)
+	c, err := websocket.Accept(w, r, 
+                    &websocket.AcceptOptions{ OriginPatterns: []string{"*"},
+		  })
 	if err != nil {
 		cs.logf("%v", err)
 		return
 	}
 	defer c.Close(websocket.StatusInternalError, "")
+        room := strings.Split(r.URL.Path, "/")
 
-	err = cs.subscribe(r.Context(), c)
+        if len(room) == 3 {
+         cs.logf("%v", room[2])
+         err = cs.subscribeRoom(r.Context(), c, room[2])
+        } else {
+         err = cs.subscribe(r.Context(), c)
+        }
+
 	if errors.Is(err, context.Canceled) {
 		return
 	}
@@ -104,7 +119,14 @@ func (cs *chatServer) publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs.publish(msg)
+        cs.publish(msg)
+        room := strings.Split(r.URL.Path, "/")
+
+        if len(room) == 3 {
+         cs.publishRoom(msg, room[2])
+        } else {
+         cs.publishRooms(msg)
+        }
 
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -142,6 +164,39 @@ func (cs *chatServer) subscribe(ctx context.Context, c *websocket.Conn) error {
 	}
 }
 
+// subscribe subscribes the given WebSocket to all broadcast messages.
+// It creates a subscriber with a buffered msgs chan to give some room to slower
+// connections and then registers the subscriber. It then listens for all messages
+// and writes them to the WebSocket. If the context is cancelled or
+// an error occurs, it returns and deletes the subscription.
+//
+// It uses CloseRead to keep reading from the connection to process control
+// messages and cancel the context if the connection drops.
+func (cs *chatServer) subscribeRoom(ctx context.Context, c *websocket.Conn, room string) error {
+        ctx = c.CloseRead(ctx)
+
+        s := &subscriber{
+                msgs: make(chan []byte, cs.subscriberMessageBuffer),
+                closeSlow: func() {
+                        c.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
+                },
+        }
+        cs.addRoomSubscriber(s, room)
+        defer cs.deleteRoomSubscriber(s, room)
+
+        for {
+                select {
+                case msg := <-s.msgs:
+                        err := writeTimeout(ctx, time.Second*5, c, msg)
+                        if err != nil {
+                                return err
+                        }
+                case <-ctx.Done():
+                        return ctx.Err()
+                }
+        }
+}
+
 // publish publishes the msg to all subscribers.
 // It never blocks and so messages to slow subscribers
 // are dropped.
@@ -160,6 +215,44 @@ func (cs *chatServer) publish(msg []byte) {
 	}
 }
 
+// publish publishes the msg to all subscribers in a single room.
+// It never blocks and so messages to slow subscribers
+// are dropped.
+func (cs *chatServer) publishRoom(msg []byte, room string) {
+        cs.roomsMu.Lock()
+        defer cs.roomsMu.Unlock()
+
+        cs.publishLimiter.Wait(context.Background())
+
+        for s := range cs.rooms[room] {
+                select {
+                case s.msgs <- msg:
+                default:
+                        go s.closeSlow()
+                }
+        }
+}
+
+// publish publishes the msg to all subscribers in all rooms
+// It never blocks and so messages to slow subscribers
+// are dropped.
+func (cs *chatServer) publishRooms(msg []byte) {
+        cs.roomsMu.Lock()
+        defer cs.roomsMu.Unlock()
+
+        cs.publishLimiter.Wait(context.Background())
+
+        for k := range cs.rooms {
+          for s := range cs.rooms[k] {
+                select {
+                case s.msgs <- msg:
+                default:
+                        go s.closeSlow()
+                }
+          }
+        }
+}
+
 // addSubscriber registers a subscriber.
 func (cs *chatServer) addSubscriber(s *subscriber) {
 	cs.subscribersMu.Lock()
@@ -167,11 +260,30 @@ func (cs *chatServer) addSubscriber(s *subscriber) {
 	cs.subscribersMu.Unlock()
 }
 
+// addSubscriber registers a subscriber to a room.
+func (cs *chatServer) addRoomSubscriber(s *subscriber, room string) {
+        cs.roomsMu.Lock()
+        if len(cs.rooms[room]) == 0 {
+          cs.rooms[room] = make(map[*subscriber]struct{})
+        }
+        cs.rooms[room][s] = struct{}{}
+        cs.roomsMu.Unlock()
+}
+
 // deleteSubscriber deletes the given subscriber.
 func (cs *chatServer) deleteSubscriber(s *subscriber) {
 	cs.subscribersMu.Lock()
 	delete(cs.subscribers, s)
 	cs.subscribersMu.Unlock()
+}
+
+// deleteSubscriber deletes the given subscriber.
+func (cs *chatServer) deleteRoomSubscriber(s *subscriber, room string) {
+        if len(cs.rooms[room]) != 0 {
+           cs.roomsMu.Lock()
+           delete(cs.rooms[room], s)
+           cs.roomsMu.Unlock()
+        }
 }
 
 func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, msg []byte) error {

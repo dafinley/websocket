@@ -35,7 +35,13 @@ go get nhooyr.io/websocket
 For a production quality example that demonstrates the complete API, see the
 [echo example](./examples/echo).
 
-For a full stack example, see the [chat example](./examples/chat).
+For a full stack Chat example designed for chat rooms, see the [chat example](./examples/chat).
+It is designed for WSS so ensure your chat server is secured.
+
+Here is an example command to get the chat server running locally on port 8080
+```bash
+go run . localhost:8080
+```
 
 ### Server
 
